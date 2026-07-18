@@ -32,3 +32,4 @@ D:\csharp\cqrs-sample\bin\Debug\net10.0\Microsoft.Extensions.Logging.Console.dll
 D:\csharp\cqrs-sample\bin\Debug\net10.0\Microsoft.Extensions.Options.dll
 D:\csharp\cqrs-sample\bin\Debug\net10.0\Microsoft.Extensions.Options.ConfigurationExtensions.dll
 D:\csharp\cqrs-sample\bin\Debug\net10.0\Microsoft.Extensions.Primitives.dll
+D:\csharp\cqrs-sample\obj\Debug\net10.0\cqrs-sample.sourcelink.json

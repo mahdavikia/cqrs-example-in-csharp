@@ -10,7 +10,7 @@ using Microsoft.Extensions.Logging;
 namespace CQRSFullExample
 {
     // ==========================================
-    // DOMAIN MODELS (The Core)
+    // 1. DOMAIN MODELS
     // ==========================================
     public class Product
     {
@@ -20,19 +20,12 @@ namespace CQRSFullExample
     }
 
     // ==========================================
-    // DATABASE MOCKS (Simulating Write & Read DBs)
+    // 2. DATABASE MOCKS
     // ==========================================
-    public class WriteDatabase
-    {
-        public List<Product> Products = new List<Product>();
-    }
+    public class WriteDatabase { public List<Product> Products = new List<Product>(); }
+    public class ReadDatabase { public List<ProductView> ProductViews = new List<ProductView>(); }
 
-    public class ReadDatabase
-    {
-        public List<ProductView> ProductViews = new List<ProductView>();
-    }
-
-    public class ProductView // Denormalized Model
+    public class ProductView 
     {
         public int Id { get; set; }
         public string DisplayName { get; set; }
@@ -40,177 +33,146 @@ namespace CQRSFullExample
     }
 
     // ==========================================
-    // EVENTS (The Bridge)
+    // 3. EVENTS & COMMANDS & QUERIES
     // ==========================================
     public record ProductUpdatedEvent(int Id, string Name, decimal Price) : INotification;
-
-    // ==========================================
-    // COMMAND SIDE (Write Side)
-    // ==========================================
     public record UpdateProductPriceCommand(int Id, decimal NewPrice) : IRequest<bool>;
+    public record GetProductQuery(int Id) : IRequest<ProductView>;
 
+    // ==========================================
+    // 4. HANDLERS
+    // ==========================================
     public class UpdateProductPriceHandler : IRequestHandler<UpdateProductPriceCommand, bool>
     {
         private readonly WriteDatabase _writeDb;
         private readonly IMediator _mediator;
-
-        public UpdateProductPriceHandler(WriteDatabase writeDb, IMediator mediator)
-        {
-            _writeDb = writeDb;
-            _mediator = mediator;
-        }
+        public UpdateProductPriceHandler(WriteDatabase writeDb, IMediator mediator) { _writeDb = writeDb; _mediator = mediator; }
 
         public async Task<bool> Handle(UpdateProductPriceCommand request, CancellationToken cancellationToken)
         {
-            Console.WriteLine($"[Command] Updating Price for Product {request.Id} to {request.NewPrice}...");
-            
             var product = _writeDb.Products.FirstOrDefault(p => p.Id == request.Id);
             if (product == null) return false;
             product.Price = request.NewPrice;
             await _mediator.Publish(new ProductUpdatedEvent(product.Id, product.Name, product.Price));
-
             return true;
         }
     }
 
-    // ==========================================
-    // PROJECTION (The Synchronizer)
-    // ==========================================
     public class ProductProjectionHandler : INotificationHandler<ProductUpdatedEvent>
     {
         private readonly ReadDatabase _readDb;
-
-        public ProductProjectionHandler(ReadDatabase readDb)
-        {
-            _readDb = readDb;
-        }
+        public ProductProjectionHandler(ReadDatabase readDb) => _readDb = readDb;
 
         public Task Handle(ProductUpdatedEvent notification, CancellationToken cancellationToken)
         {
-            Console.WriteLine($"[Projection] Syncing Read Model for Product {notification.Id}...");
-
             var view = _readDb.ProductViews.FirstOrDefault(v => v.Id == notification.Id);
             if (view == null)
-            {
-                _readDb.ProductViews.Add(new ProductView
-                {
-                    Id = notification.Id,
-                    DisplayName = notification.Name,
-                    PriceText = $"{notification.Price:C}" // Denormalized field
-                });
-            }
+                _readDb.ProductViews.Add(new ProductView { Id = notification.Id, DisplayName = notification.Name, PriceText = $"{notification.Price:N2} USD" });
             else
-            {
-                view.PriceText = $"{notification.Price:C}";
-            }
-
+                view.PriceText = $"{notification.Price:N2} USD";
             return Task.CompletedTask;
         }
     }
 
-    // ==========================================
-    // QUERY SIDE (Read Side)
-    // ==========================================
-    public record GetProductQuery(int Id) : IRequest<ProductView>;
-
     public class GetProductQueryHandler : IRequestHandler<GetProductQuery, ProductView>
     {
         private readonly ReadDatabase _readDb;
-
-        public GetProductQueryHandler(ReadDatabase readDb)
-        {
-            _readDb = readDb;
-        }
-
-        public Task<ProductView> Handle(GetProductQuery request, CancellationToken cancellationToken)
-        {
-            Console.WriteLine($"[Query] Fetching Product {request.Id} from Read DB...");
-            var result = _readDb.ProductViews.FirstOrDefault(p => p.Id == request.Id);
-            return Task.FromResult(result);
-        }
+        public GetProductQueryHandler(ReadDatabase readDb) => _readDb = readDb;
+        public Task<ProductView> Handle(GetProductQuery request, CancellationToken cancellationToken) => 
+            Task.FromResult(_readDb.ProductViews.FirstOrDefault(p => p.Id == request.Id));
     }
 
     // ==========================================
-    // MAIN PROGRAM (Entry Point)
+    // 5. MAIN PROGRAM (With Table Output)
     // ==========================================
     class Program
     {
         static async Task Main(string[] args)
         {
             var services = new ServiceCollection();
-
-            services.AddLogging(configure => configure.AddConsole());
-
+            services.AddLogging(configure =>
+            {
+                configure.AddConsole(); // این متد نیاز به پکیج Microsoft.Extensions.Logging.Console دارد
+            });
             services.AddSingleton<WriteDatabase>();
             services.AddSingleton<ReadDatabase>();
-
             services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(Program).Assembly));
-
             var serviceProvider = services.BuildServiceProvider();
-
-            var writeDb = serviceProvider.GetRequiredService<WriteDatabase>();
-            var readDb = serviceProvider.GetRequiredService<ReadDatabase>();
             var mediator = serviceProvider.GetRequiredService<IMediator>();
+            var writeDb = serviceProvider.GetRequiredService<WriteDatabase>();
 
-            writeDb.Products.Add(new Product { Id = 1, Name = "Laptop", Price = 1000 });
-            
-            await mediator.Publish(new ProductUpdatedEvent(1, "Laptop", 1000));
+            // Seed
+            writeDb.Products.Add(new Product { Id = 1, Name = "Gaming Laptop", Price = 1500 });
+            writeDb.Products.Add(new Product { Id = 2, Name = "Mechanical Keyboard", Price = 120 });
+            foreach(var p in writeDb.Products.ToList()) 
+                await mediator.Publish(new ProductUpdatedEvent(p.Id, p.Name, p.Price));
 
-            Console.WriteLine("--- Initial State ---");
-            var initialView = await mediator.Send(new GetProductQuery(1));
-            Console.WriteLine($"Product: {initialView?.DisplayName}, Price: {initialView?.PriceText}");
-            Console.WriteLine("---------------------\n");
+            Console.Clear();
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine("==============================================================");
+            Console.WriteLine("      CQRS SYSTEM - PRODUCT MANAGEMENT DASHBOARD             ");
+            Console.WriteLine("==============================================================");
+            Console.ResetColor();
 
-
-            var command = new UpdateProductPriceCommand(1, 1200);
-            await mediator.Send(command);
-
-            Console.WriteLine("\n--- After Command Execution ---");
-
-            var updatedView = await mediator.Send(new GetProductQuery(1));
-            Console.WriteLine($"Product: {updatedView?.DisplayName}, Price: {updatedView?.PriceText}");
-            Console.WriteLine("-------------------------------");
-
-            Console.WriteLine("\nPress any key to exit...");
-            //Console.ReadKey();
             while (true)
             {
-                try
+                // Display Current State in a Table
+                PrintProductTable(serviceProvider.GetRequiredService<ReadDatabase>().ProductViews);
+
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine("\n[Action] Enter Product ID to update (or 0 to exit): ");
+                Console.ResetColor();
+                
+                if (!int.TryParse(Console.ReadLine(), out int id) || id == 0) break;
+
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.Write("[Action] Enter New Price: ");
+                Console.ResetColor();
+                
+                if (!decimal.TryParse(Console.ReadLine(), out decimal newPrice))
                 {
-                    Console.Write("\nEnter Product ID to update (or 0 to exit): ");
-                    int id = int.Parse(Console.ReadLine());
-                    if (id == 0) break;
-
-                    Console.Write("Enter New Price: ");
-                    decimal newPrice = decimal.Parse(Console.ReadLine());
-                    Console.WriteLine("\n[System] Sending Command...");
-                    bool success = await mediator.Send(new UpdateProductPriceCommand(id, newPrice));
-
-                    if (success)
-                    {
-                        Console.WriteLine("[System] Command Success!");
-                        
-                        Console.WriteLine("[System] Fetching updated data via Query...");
-                        var _updatedView = await mediator.Send(new GetProductQuery(id));
-                        
-                        if (updatedView != null)
-                        {
-                            Console.WriteLine("\n>>> RESULT FROM READ MODEL <<<");
-                            Console.WriteLine($"Product: {_updatedView.DisplayName}");
-                            Console.WriteLine($"New Price: {_updatedView.PriceText}");
-                            Console.WriteLine(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n");
-                        }
-                    }
-                    else
-                    {
-                        Console.WriteLine("[Error] Product not found!");
-                    }
+                    Console.WriteLine("!!! Invalid Price Format !!!");
+                    continue;
                 }
-                catch (Exception ex)
+
+                // Execute Command
+                Console.ForegroundColor = ConsoleColor.Magenta;
+                Console.WriteLine("\n[System] Executing Command: UpdateProductPrice...");
+                bool success = await mediator.Send(new UpdateProductPriceCommand(id, newPrice));
+                Console.ResetColor();
+
+                if (success)
                 {
-                    Console.WriteLine($"[Error] Invalid input: {ex.Message}");
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine("[System] SUCCESS: Command processed and Event published.");
+                    Console.ResetColor();
+                    // Small delay to simulate async processing/eventual consistency feel
+                    await Task.Delay(500); 
+                }
+                else
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine("[System] ERROR: Product ID not found!");
+                    Console.ResetColor();
                 }
             }
+        }
+
+        // Helper method to print a professional table
+        static void PrintProductTable(List<ProductView> products)
+        {
+            string header = string.Format("| {0,-5} | {1,-20} | {2,-15} |", "ID", "Product Name", "Price (Read Model)");
+            string divider = new string('-', header.Length);
+
+            Console.WriteLine(divider);
+            Console.WriteLine(header);
+            Console.WriteLine(divider);
+
+            foreach (var p in products)
+            {
+                Console.WriteLine($"| {p.Id,-5} | {p.DisplayName,-20} | {p.PriceText,-15} |");
+            }
+            Console.WriteLine(divider);
         }
     }
 }
