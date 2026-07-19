@@ -100,7 +100,6 @@ namespace CQRSFullExample
             var serviceProvider = services.BuildServiceProvider();
             var mediator = serviceProvider.GetRequiredService<IMediator>();
             var writeDb = serviceProvider.GetRequiredService<WriteDatabase>();
-
             // Seed
             writeDb.Products.Add(new Product { Id = 1, Name = "Gaming Laptop", Price = 1500 });
             writeDb.Products.Add(new Product { Id = 2, Name = "Mechanical Keyboard", Price = 120 });
