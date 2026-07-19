@@ -92,7 +92,7 @@ namespace CQRSFullExample
             var services = new ServiceCollection();
             services.AddLogging(configure =>
             {
-                configure.AddConsole(); // این متد نیاز به پکیج Microsoft.Extensions.Logging.Console دارد
+                configure.AddConsole(); 
             });
             services.AddSingleton<WriteDatabase>();
             services.AddSingleton<ReadDatabase>();
